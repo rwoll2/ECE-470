@@ -30,8 +30,8 @@ def compute_gradients(state, targets, obstacles, r):
 
     ## Navigation field ##
 
-    obs_detect_rad = 0.25
-    k = 0.0001 * 1/(obs_detect_rad)**3
+    # obs_detect_rad = 0.25
+    k = 5
     K_weight = 1
     safetyZone = 0.95
     boundaryStrength = 1
@@ -56,13 +56,27 @@ def compute_gradients(state, targets, obstacles, r):
     for obstacle in obstacles:
       d_obs = np.copy(state) #get size of state vector
       for i in range(len(d_obs)):
-         d_obs[i][0] = state[i][0] - obstacle["center"][0] #- obstacle["radius"]
-         d_obs[i][1] = state[i][1] - obstacle["center"][1] #- obstacle["radius"]
+         d_obs[i][0] = state[i][0] - obstacle["center"][0]
+         d_obs[i][1] = state[i][1] - obstacle["center"][1]
+
+         angle = np.arctan2(d_obs[i][1], d_obs[i][0])
+
+         d_obs[i][0] -= np.cos(angle)*(obstacle["radius"] + r/2)
+         d_obs[i][1] -= np.sin(angle)*(obstacle["radius"] + r/2)
 
       for i in range(len(d_obs)):
-        if np.linalg.norm(d_obs[i]) < obs_detect_rad:
-          d_obs[i][0] = max(-1, min(1, k/(d_obs[i][0] ** 3) ))
-          d_obs[i][1] = max(-1, min(1, k/(d_obs[i][1] ** 3) ))
+        # Obstacle detected and close enough to move
+        if np.linalg.norm(d_obs[i]) < 0.05:
+          # Colinearity detection
+          angle = np.arctan2(d_obs[i][1], d_obs[i][0])
+          if np.dot(Fgoal[i]/np.linalg.norm(Fgoal[i]), d_obs[i]/np.linalg.norm(d_obs[i])) < -0.99:
+            d_obs[i][0] = -Fgoal[i][0] - np.sin(angle)
+            d_obs[i][1] = -Fgoal[i][1] + np.cos(angle)
+            # print(f"Colinearity detected! applying force ({d_obs[i][0]}, {d_obs[i][1]})")
+          else:
+            magnitude = k/np.linalg.norm(d_obs[i])**3
+            d_obs[i][0] = np.cos(angle)*magnitude
+            d_obs[i][1] = np.sin(angle)*magnitude
         else:
           d_obs[i][0] = 0 
           d_obs[i][1] = 0
@@ -84,11 +98,11 @@ def compute_gradients(state, targets, obstacles, r):
     # return np.add(Fboundary, np.add(Fgoal, ob_F_total))
     Fsum = np.add(Fgoal, ob_F_total)
 
-    for i in range(len(Fsum)):
-       if np.linalg.norm(Fsum[i]) < 0.001:
-          # print("Fgoal:\n", Fgoal)
-          # print("Fobs:\n", ob_F_total)
-          Fsum[i] = np.add(Fsum[i], np.array([0.01, 0.01]))
+    # for i in range(len(Fsum)):
+    #    if np.linalg.norm(Fsum[i]) < 0.001:
+    #       # print("Fgoal:\n", Fgoal)
+    #       # print("Fobs:\n", ob_F_total)
+    #       Fsum[i] = np.add(Fsum[i], np.array([0.01, 0.01]))
 
     return Fsum
 
