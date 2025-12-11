@@ -1,6 +1,11 @@
 import numpy as np
 import math
 
+def speed_cap(V, vmax, eps=1e-12):
+    norms = np.linalg.norm(V, axis=1, keepdims=True)
+    scale = np.minimum(1.0, vmax / (norms + eps))
+    return V * scale
+
 def compute_gradients(state, targets, obstacles, r):
     """
     Compute a velocity field (interpreted by the envelope as -∇U) for each robot.
@@ -31,14 +36,18 @@ def compute_gradients(state, targets, obstacles, r):
     ## Navigation field ##
 
     # obs_detect_rad = 0.25
-    k = 0.8
-    k_bot = 3
-    K_weight = 1
+    obs_repel_slope = 0.5
+    obs_repel_scale = 1
+    obs_det_rad = 2 * r + 1e-12
+    rob_repel_slope = 3
+    bowl_slope = 1
     safetyZone = 0.95
     boundaryStrength = 1
+    dt = 0.005
+    vmax = 0.05
 
     ####Goal's pot bowl (0 potential)
-    K = K_weight * np.eye(len(state))
+    K = bowl_slope * np.eye(len(state))
     #Pgoal = 0.5*np.subtract(state, targets).T @ K @ np.subtract(state, targets) #bowl centered @ target
     Fgoal = K @ np.subtract(targets, state)
 
@@ -67,7 +76,7 @@ def compute_gradients(state, targets, obstacles, r):
 
       for i in range(len(d_obs)):
         # Obstacle detected and close enough to move
-        if np.linalg.norm(d_obs[i]) < 0.05:
+        if np.linalg.norm(d_obs[i]) < obs_det_rad:
           # Colinearity detection
           angle = np.arctan2(d_obs[i][1], d_obs[i][0])
           if np.dot(Fgoal[i]/np.linalg.norm(Fgoal[i]), d_obs[i]/np.linalg.norm(d_obs[i])) < -0.99:
@@ -75,7 +84,7 @@ def compute_gradients(state, targets, obstacles, r):
             d_obs[i][1] = -Fgoal[i][1] + np.cos(angle)
           # Default repulsion function
           else:
-            magnitude = k/np.linalg.norm(d_obs[i])**3
+            magnitude = obs_repel_slope/np.linalg.norm(d_obs[i]*obs_repel_scale)**3
             d_obs[i][0] = np.cos(angle)*magnitude
             d_obs[i][1] = np.sin(angle)*magnitude
         else:
@@ -89,6 +98,56 @@ def compute_gradients(state, targets, obstacles, r):
       #  print(ob_F_total)
       #  print(obs_forces[i + 1])
        ob_F_total = np.add(ob_F_total, obs_forces[i + 1])
+    Fsum = np.add(Fgoal, ob_F_total)
+    V = speed_cap(np.asarray(Fsum, dtype=float), vmax)
+    state_new = state + dt * V
+
+    reversal = []
+    need_reverse = []
+    for i in range(len(state_new)):
+      for j in range(len(state_new)):
+          if i == j:
+            continue
+          if np.linalg.norm(np.subtract(state_new[i], state_new[j])) <= 2*r + 1e-12:
+            i_force_stronger = np.linalg.norm(Fsum[i]) > np.linalg.norm(Fsum[j])
+            if i_force_stronger:
+              # state_new[i] = state[i] - dt / 2 * V[i]
+              # V[i] = V[i]/2
+              state_new[j] = state[j] - dt * V[j]
+              V[j] = -V[j]
+              reversal.append(j)
+              for k in range(len(state_new)):
+                 if j == k:
+                    continue
+                 if np.linalg.norm(np.subtract(state_new[k], state_new[j])) <= 2*r + 1e-12:
+                    need_reverse.append(k)
+            else:
+              # state_new[j] = state[j] - dt / 2 * V[j]
+              # V[j] = V[j]/2
+              state_new[i] = state[i] - dt * V[i]
+              V[i] = -V[i]
+              reversal.append(i)
+              for k in range(len(state_new)):
+                 if i == k:
+                    continue
+                 if np.linalg.norm(np.subtract(state_new[k], state_new[i])) <= 2*r + 1e-12:
+                    need_reverse.append(k)
+
+    while len(need_reverse) > 0:
+      for i in reversal:
+        need_reverse.remove(i)
+      new_reverse = []
+      for i in need_reverse:
+        state_new[i] = state[i] - dt * V[i]
+        V[i] = -V[i]
+        reversal.append(i)
+        for k in range(len(state_new)):
+          if i == k:
+            continue
+          if np.linalg.norm(np.subtract(state_new[k], state_new[i])) <= 2*r + 1e-12:
+            if k not in reversal:
+              new_reverse.append(k)
+      need_reverse = new_reverse
        
     # rob_forces = []
     # for j in range(len(state)):
@@ -128,7 +187,6 @@ def compute_gradients(state, targets, obstacles, r):
     #    rob_F_total = np.add(rob_F_total, rob_forces[i + 1])
 
     # return np.add(Fboundary, np.add(Fgoal, ob_F_total))
-    Fsum = np.add(Fgoal, ob_F_total)
     # Fsum = np.add(Fsum, rob_F_total)
 
     # for i in range(len(Fsum)):
@@ -137,6 +195,6 @@ def compute_gradients(state, targets, obstacles, r):
     #       # print("Fobs:\n", ob_F_total)
     #       Fsum[i] = np.add(Fsum[i], np.array([0.01, 0.01]))
 
-    return Fsum
+    return V
 
     
