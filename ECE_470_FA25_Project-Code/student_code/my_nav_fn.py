@@ -1,10 +1,4 @@
 import numpy as np
-import math
-
-def speed_cap(V, vmax, eps=1e-12):
-    norms = np.linalg.norm(V, axis=1, keepdims=True)
-    scale = np.minimum(1.0, vmax / (norms + eps))
-    return V * scale
 
 def compute_gradients(state, targets, obstacles, r):
     """
@@ -23,178 +17,179 @@ def compute_gradients(state, targets, obstacles, r):
                 The envelope will cap the speed and step the system forward.
                 IMPORTANT: Must be finite numbers (no NaN/Inf).
     """
-
-    # ============================================================
-    # TODO: Replace this naive baseline with YOUR navigation field.
-    # ============================================================
-
-    ## --- Naive placeholder baseline (will often fail): straight to target.
-    #V = targets - state
-    #norms = np.linalg.norm(V, axis=1, keepdims=True) + 1e-12
-    #return V / norms  # unit direction toward target
-
-    ## Navigation field ##
-
-    # obs_detect_rad = 0.25
-    obs_repel_slope = 0.5
-    obs_repel_scale = 1
-    obs_det_rad = 2 * r + 1e-12
-    rob_repel_slope = 3
-    bowl_slope = 1
-    safetyZone = 0.95
-    boundaryStrength = 1
-    dt = 0.005
-    vmax = 0.05
-
-    ####Goal's pot bowl (0 potential)
-    K = bowl_slope * np.eye(len(state))
-    #Pgoal = 0.5*np.subtract(state, targets).T @ K @ np.subtract(state, targets) #bowl centered @ target
-    Fgoal = K @ np.subtract(targets, state)
-
-    ####boundary repulsion
-    # Fboundary = np.copy(Fgoal)
-    # for i in range(len(state)):
-    #   if(state[i][0]**2 + state[i][1]**2 > safetyZone): #x^2+y^2
-    #      Fboundary[i][0] = boundaryStrength * -state[i][0]
-    #      Fboundary[i][1] = boundaryStrength * -state[i][1]
-    #   else:
-    #      Fboundary[i][0] = 0
-    #      Fboundary[i][1] = 0
-
-    ####obstacles repulsion (1 potential)
-    obs_forces = []
-    for obstacle in obstacles:
-      d_obs = np.copy(state) #get size of state vector
-      for i in range(len(d_obs)):
-         d_obs[i][0] = state[i][0] - obstacle["center"][0]
-         d_obs[i][1] = state[i][1] - obstacle["center"][1]
-
-         angle = np.arctan2(d_obs[i][1], d_obs[i][0])
-
-         d_obs[i][0] -= np.cos(angle)*(obstacle["radius"] + r/2)
-         d_obs[i][1] -= np.sin(angle)*(obstacle["radius"] + r/2)
-
-      for i in range(len(d_obs)):
-        # Obstacle detected and close enough to move
-        if np.linalg.norm(d_obs[i]) < obs_det_rad:
-          # Colinearity detection
-          angle = np.arctan2(d_obs[i][1], d_obs[i][0])
-          if np.dot(Fgoal[i]/np.linalg.norm(Fgoal[i]), d_obs[i]/np.linalg.norm(d_obs[i])) < -0.99:
-            d_obs[i][0] = -Fgoal[i][0] - np.sin(angle)
-            d_obs[i][1] = -Fgoal[i][1] + np.cos(angle)
-          # Default repulsion function
-          else:
-            magnitude = obs_repel_slope/np.linalg.norm(d_obs[i]*obs_repel_scale)**3
-            d_obs[i][0] = np.cos(angle)*magnitude
-            d_obs[i][1] = np.sin(angle)*magnitude
-        else:
-          d_obs[i][0] = 0 
-          d_obs[i][1] = 0
-      
-      obs_forces.append(d_obs)
-
-    ob_F_total = np.copy(obs_forces[0])
-    for i in range(len(obs_forces) - 1):
-      #  print(ob_F_total)
-      #  print(obs_forces[i + 1])
-       ob_F_total = np.add(ob_F_total, obs_forces[i + 1])
-    Fsum = np.add(Fgoal, ob_F_total)
-    V = speed_cap(np.asarray(Fsum, dtype=float), vmax)
-    state_new = state + dt * V
-
-    reversal = []
-    need_reverse = []
-    for i in range(len(state_new)):
-      for j in range(len(state_new)):
-          if i == j:
-            continue
-          if np.linalg.norm(np.subtract(state_new[i], state_new[j])) <= 2*r + 1e-12:
-            i_force_stronger = np.linalg.norm(Fsum[i]) > np.linalg.norm(Fsum[j])
-            if i_force_stronger:
-              # state_new[i] = state[i] - dt / 2 * V[i]
-              # V[i] = V[i]/2
-              state_new[j] = state[j] - dt * V[j]
-              V[j] = -V[j]
-              reversal.append(j)
-              for k in range(len(state_new)):
-                 if j == k:
-                    continue
-                 if np.linalg.norm(np.subtract(state_new[k], state_new[j])) <= 2*r + 1e-12:
-                    need_reverse.append(k)
-            else:
-              # state_new[j] = state[j] - dt / 2 * V[j]
-              # V[j] = V[j]/2
-              state_new[i] = state[i] - dt * V[i]
-              V[i] = -V[i]
-              reversal.append(i)
-              for k in range(len(state_new)):
-                 if i == k:
-                    continue
-                 if np.linalg.norm(np.subtract(state_new[k], state_new[i])) <= 2*r + 1e-12:
-                    need_reverse.append(k)
-
-    while len(need_reverse) > 0:
-      for i in reversal:
-        need_reverse.remove(i)
-      new_reverse = []
-      for i in need_reverse:
-        state_new[i] = state[i] - dt * V[i]
-        V[i] = -V[i]
-        reversal.append(i)
-        for k in range(len(state_new)):
-          if i == k:
-            continue
-          if np.linalg.norm(np.subtract(state_new[k], state_new[i])) <= 2*r + 1e-12:
-            if k not in reversal:
-              new_reverse.append(k)
-      need_reverse = new_reverse
-       
-    # rob_forces = []
-    # for j in range(len(state)):
-    #   d_rob = np.copy(state) #get size of state vector
-    #   for i in range(len(d_rob)):
-    #      d_rob[i][0] = state[i][0] - state[j][0]
-    #      d_rob[i][1] = state[i][1] - state[j][1]
-
-    #      angle = np.arctan2(d_obs[i][1], d_obs[i][0])
-
-    #      d_rob[i][0] -= np.cos(angle)*r
-    #      d_rob[i][1] -= np.sin(angle)*r
-
-    #   for i in range(len(d_rob)):
-    #     # Obstacle detected and close enough to move
-    #     if (i < j and np.linalg.norm(d_rob[i]) < 2.1*r) or (j < i and np.linalg.norm(d_rob[i]) < 3*r):
-    #       # Colinearity detection
-    #       angle = np.arctan2(d_rob[i][1], d_rob[i][0])
-    #       if np.dot(Fgoal[i]/np.linalg.norm(Fgoal[i]), d_rob[i]/np.linalg.norm(d_rob[i])) < -0.99:
-    #         d_rob[i][0] = -Fgoal[i][0] - np.sin(angle)
-    #         d_rob[i][1] = -Fgoal[i][1] + np.cos(angle)
-    #       # Default repulsion function
-    #       else:
-    #         magnitude = k_bot/np.linalg.norm(d_rob[i])**3
-    #         d_rob[i][0] = np.cos(angle)*magnitude
-    #         d_rob[i][1] = np.sin(angle)*magnitude
-    #     else:
-    #       d_rob[i][0] = 0 
-    #       d_rob[i][1] = 0
-      
-    #   rob_forces.append(d_rob)
-
-    # rob_F_total = np.copy(rob_forces[0])
-    # for i in range(len(rob_forces) - 1):
-    #   #  print(ob_F_total)
-    #   #  print(obs_forces[i + 1])
-    #    rob_F_total = np.add(rob_F_total, rob_forces[i + 1])
-
-    # return np.add(Fboundary, np.add(Fgoal, ob_F_total))
-    # Fsum = np.add(Fsum, rob_F_total)
-
-    # for i in range(len(Fsum)):
-    #    if np.linalg.norm(Fsum[i]) < 0.001:
-    #       # print("Fgoal:\n", Fgoal)
-    #       # print("Fobs:\n", ob_F_total)
-    #       Fsum[i] = np.add(Fsum[i], np.array([0.01, 0.01]))
-
-    return V
-
     
+    n = state.shape[0]
+    eps = 1e-8  # Small constant to prevent division by zero
+    
+    # =====================
+    # Tunable Parameters
+    # =====================
+    k_goal = 1.0          # Goal attraction strength
+    k_obs = 0.5           # Obstacle repulsion strength
+    k_pair = 2.0          # Robot-robot repulsion strength
+    k_boundary = 0.5      # Boundary repulsion strength
+    
+    obs_detect_rad = 0.02      # Distance at which obstacle forces activate
+    pair_detect_rad = 0.5     # Distance at which robot-robot forces activate (increased!)
+    boundary_detect_rad = 0  # Distance from boundary to activate repulsion
+    
+    # =====================
+    # Step 1: Goal Attraction (Potential Bowl)
+    # =====================
+    F_goal = k_goal * (targets - state)
+    
+    # =====================
+    # Step 2: Obstacle Repulsion
+    # =====================
+    F_obs = np.zeros_like(state)
+    
+    for obs in obstacles:
+        center = np.array(obs["center"], dtype=float)
+        R_obs = float(obs["radius"])
+        
+        # Vector from obstacle center to each robot
+        diff = state - center  # (n, 2)
+        dist_to_center = np.linalg.norm(diff, axis=1, keepdims=True)  # (n, 1)
+        
+        # Distance to obstacle surface (accounting for robot radius)
+        d_surface = dist_to_center - (R_obs + r)  # (n, 1)
+        
+        # Unit direction away from obstacle
+        direction = diff / (dist_to_center + eps)  # (n, 2)
+        
+        # Apply repulsion within detection radius
+        in_range = (d_surface < obs_detect_rad) & (d_surface > eps)
+        magnitude = np.where(in_range, k_obs / (d_surface ** 2 + eps), 0.0)
+        
+        # Local minima escape: add tangential component when obstacle is between robot and goal
+        for i in range(n):
+            # Vector from robot to goal
+            to_goal = targets[i] - state[i]
+            to_goal_norm = np.linalg.norm(to_goal)
+            if to_goal_norm < eps:
+                continue
+            to_goal_unit = to_goal / to_goal_norm
+            
+            # Vector from robot to obstacle center
+            to_obs = center - state[i]
+            to_obs_norm = np.linalg.norm(to_obs)
+            if to_obs_norm < eps:
+                continue
+            to_obs_unit = to_obs / to_obs_norm
+            
+            # Distance from robot to obstacle surface
+            d_to_obs_surface = to_obs_norm - (R_obs + r)
+            
+            # Check if obstacle is in the way (goal is roughly behind obstacle)
+            alignment = np.dot(to_goal_unit, to_obs_unit)
+            
+            # Also check if goal is farther than obstacle
+            if alignment > 0.5 and to_goal_norm > to_obs_norm and d_to_obs_surface < obs_detect_rad * 2:
+                # Add perpendicular tangent force to escape
+                tangent = np.array([-to_obs_unit[1], to_obs_unit[0]])  # 90 degree rotation
+                
+                # Use robot index to pick consistent direction
+                if i % 2 == 0:
+                    tangent = -tangent
+                
+                # Tangent force based on alignment and proximity
+                # Stronger when more aligned and closer
+                prox_factor = max(0, 1 - d_to_obs_surface / (obs_detect_rad * 2))
+                tangent_strength = alignment * prox_factor * k_obs * 0.8
+                F_obs[i] += tangent_strength * tangent
+        
+        F_obs += magnitude * direction
+    
+    # =====================
+    # Step 3: Robot-Robot Repulsion with Symmetry Breaking
+    # =====================
+    F_pair = np.zeros_like(state)
+    collision_dist = 2 * r  # Distance at which collision is declared
+    
+    for i in range(n):
+        for j in range(i+1, n):  # Only process each pair once
+            diff_ij = state[i] - state[j]  # Vector from j to i
+            dist_ij = np.linalg.norm(diff_ij)
+            
+            # Distance beyond collision threshold
+            d_separation = dist_ij - collision_dist
+            
+            if d_separation < pair_detect_rad and d_separation > eps:
+                # Unit direction
+                direction = diff_ij / (dist_ij + eps)
+                
+                my_goal_dir = targets[i] - state[i]
+                their_goal_dir = targets[j] - state[j]
+                my_goal_norm = np.linalg.norm(my_goal_dir)
+                their_goal_norm = np.linalg.norm(their_goal_dir)
+                
+                # Force magnitude
+                magnitude = 0
+                if d_separation < pair_detect_rad/2:
+                  magnitude = k_pair / (d_separation ** 2 + eps)
+                elif d_separation < pair_detect_rad/4:
+                  magnitude = k_pair / (d_separation ** 3 + eps)
+                else:
+                  magnitude = k_pair / (10*(d_separation + eps))
+                
+                
+                # Apply repulsive force to both robots (Newton's 3rd law)
+                if np.linalg.norm(state[i]) < 1 - r - eps and their_goal_norm > eps:
+                  F_pair[i] += magnitude * direction
+                if np.linalg.norm(state[j]) < 1 - r - eps and my_goal_norm > eps:
+                  F_pair[j] -= magnitude * direction
+                
+                # Symmetry breaking: detect if robots would collide head-on
+                if my_goal_norm > eps and their_goal_norm > eps:
+                    my_goal_unit = my_goal_dir / my_goal_norm
+                    their_goal_unit = their_goal_dir / their_goal_norm
+                    
+                    # Check if trajectories would cross
+                    # 1. Goals are roughly opposite (heading toward each other)
+                    goal_alignment = np.dot(my_goal_unit, their_goal_unit)
+                    
+                    # 2. Each robot is heading toward the other's current position
+                    heading_toward_j = np.dot(my_goal_unit, -direction)  # i heading toward j?
+                    heading_toward_i = np.dot(their_goal_unit, direction)  # j heading toward i?
+                    
+                    # Apply symmetry break if either condition is met
+                    if goal_alignment < -0.3 or (heading_toward_j > 0.3 and heading_toward_i > 0.3):
+                        # Add perpendicular nudge
+                        tangent = np.array([-direction[1], direction[0]])
+                        
+                        # Use index to consistently split: robot with lower index goes one way
+                        # This creates consistent "traffic rules"
+                        nudge_strength = magnitude * 0.2
+                        if np.linalg.norm(state[i]) < 1 - r - eps:
+                          F_pair[i] += nudge_strength * tangent
+                        if np.linalg.norm(state[j]) < 1 - r - eps:
+                          F_pair[j] -= nudge_strength * tangent  # Opposite direction
+    
+    # =====================
+    # Step 4: Boundary Repulsion (Stay inside unit disk)
+    # =====================
+    F_boundary = np.zeros_like(state)
+    
+    dist_from_origin = np.linalg.norm(state, axis=1, keepdims=True)  # (n, 1)
+    d_to_boundary = 1.0 - dist_from_origin  # (n, 1)
+    
+    # Unit direction toward center (negative of position direction)
+    direction_to_center = -state / (dist_from_origin + eps)  # (n, 2)
+
+    to_goal = np.linalg.norm(targets - state)
+    
+    # Apply repulsion when close to boundary
+    in_range = (d_to_boundary < boundary_detect_rad) & (d_to_boundary > eps) & (to_goal > r + eps)
+    magnitude = np.where(in_range, k_boundary / (d_to_boundary ** 2 + eps), 0.0)
+    
+    F_boundary = magnitude * direction_to_center
+    
+    # =====================
+    # Combine Forces
+    # =====================
+    F_total = F_goal + F_obs + F_pair + F_boundary
+    
+    # Ensure no NaN/Inf values
+    F_total = np.nan_to_num(F_total, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    return F_total
