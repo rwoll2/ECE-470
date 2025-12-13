@@ -30,7 +30,9 @@ def compute_gradients(state, targets, obstacles, r):
     k_boundary = 0.5      # Boundary repulsion strength
     
     obs_detect_rad = 0.02      # Distance at which obstacle forces activate
-    pair_detect_rad = 0.5     # Distance at which robot-robot forces activate (increased!)
+    pair_detect_rad = 0.5     # Distance at which robot-robot forces activate
+    med_pair_detect_rad = 0.125 
+    close_pair_detect_rad = 0.0625 
     boundary_detect_rad = 0  # Distance from boundary to activate repulsion
     
     # =====================
@@ -125,18 +127,18 @@ def compute_gradients(state, targets, obstacles, r):
                 
                 # Force magnitude
                 magnitude = 0
-                if d_separation < pair_detect_rad/2:
-                  magnitude = k_pair / (d_separation ** 2 + eps)
-                elif d_separation < pair_detect_rad/4:
+                if d_separation < close_pair_detect_rad:
                   magnitude = k_pair / (d_separation ** 3 + eps)
+                elif d_separation < med_pair_detect_rad:
+                  magnitude = k_pair / (d_separation ** 2 + eps)
                 else:
-                  magnitude = k_pair / (10*(d_separation + eps))
+                  magnitude = k_pair / (20*(d_separation + eps))
                 
                 
                 # Apply repulsive force to both robots (Newton's 3rd law)
-                if np.linalg.norm(state[i]) < 1 - r - eps and their_goal_norm > eps:
+                if np.linalg.norm(state[i]) < 1 - r - eps and (their_goal_norm > eps or d_separation < close_pair_detect_rad):
                   F_pair[i] += magnitude * direction
-                if np.linalg.norm(state[j]) < 1 - r - eps and my_goal_norm > eps:
+                if np.linalg.norm(state[j]) < 1 - r - eps and (my_goal_norm > eps or d_separation < close_pair_detect_rad):
                   F_pair[j] -= magnitude * direction
                 
                 # Symmetry breaking: detect if robots would collide head-on
