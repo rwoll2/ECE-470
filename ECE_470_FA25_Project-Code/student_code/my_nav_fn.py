@@ -24,15 +24,18 @@ def compute_gradients(state, targets, obstacles, r):
     # =====================
     # Tunable Parameters
     # =====================
-    k_goal = 1.0          # Goal attraction strength
-    k_obs = 0.5           # Obstacle repulsion strength
+    k_goal = 20.0          # Goal attraction strength
     k_pair = 2.0          # Robot-robot repulsion strength
+    k_mid = 0.1
+    k_close = 0.01
+    k_obs = 0.0008
     k_boundary = 0.5      # Boundary repulsion strength
+    long_repel_damp = 40
     
     obs_detect_rad = 0.02      # Distance at which obstacle forces activate
-    pair_detect_rad = 0.5     # Distance at which robot-robot forces activate
-    med_pair_detect_rad = 0.125 
-    close_pair_detect_rad = 0.0625 
+    pair_detect_rad = 0.6     # Distance at which robot-robot forces activate
+    med_pair_detect_rad = 0.1 
+    close_pair_detect_rad = 0.05
     boundary_detect_rad = 0  # Distance from boundary to activate repulsion
     
     # =====================
@@ -61,7 +64,7 @@ def compute_gradients(state, targets, obstacles, r):
         
         # Apply repulsion within detection radius
         in_range = (d_surface < obs_detect_rad) & (d_surface > eps)
-        magnitude = np.where(in_range, k_obs / (d_surface ** 2 + eps), 0.0)
+        magnitude = np.where(in_range, k_obs / (d_surface ** 3 + eps), 0.0)
         
         # Local minima escape: add tangential component when obstacle is between robot and goal
         for i in range(n):
@@ -128,17 +131,19 @@ def compute_gradients(state, targets, obstacles, r):
                 # Force magnitude
                 magnitude = 0
                 if d_separation < close_pair_detect_rad:
-                  magnitude = k_pair / (d_separation ** 3 + eps)
+                  magnitude = k_close / (d_separation ** 3 + eps)
                 elif d_separation < med_pair_detect_rad:
-                  magnitude = k_pair / (d_separation ** 2 + eps)
+                  magnitude = k_mid / (d_separation ** 2 + eps)
                 else:
-                  magnitude = k_pair / (20*(d_separation + eps))
+                  magnitude = k_pair / (long_repel_damp*(d_separation + eps))
                 
                 
                 # Apply repulsive force to both robots (Newton's 3rd law)
                 if np.linalg.norm(state[i]) < 1 - r - eps and (their_goal_norm > eps or d_separation < close_pair_detect_rad):
+                # if (their_goal_norm > eps or d_separation < close_pair_detect_rad):
                   F_pair[i] += magnitude * direction
                 if np.linalg.norm(state[j]) < 1 - r - eps and (my_goal_norm > eps or d_separation < close_pair_detect_rad):
+                # if (my_goal_norm > eps or d_separation < close_pair_detect_rad):
                   F_pair[j] -= magnitude * direction
                 
                 # Symmetry breaking: detect if robots would collide head-on
@@ -181,8 +186,8 @@ def compute_gradients(state, targets, obstacles, r):
     to_goal = np.linalg.norm(targets - state)
     
     # Apply repulsion when close to boundary
-    in_range = (d_to_boundary < boundary_detect_rad) & (d_to_boundary > eps) & (to_goal > r + eps)
-    magnitude = np.where(in_range, k_boundary / (d_to_boundary ** 2 + eps), 0.0)
+    in_range = (d_to_boundary < boundary_detect_rad) & (to_goal > r + eps)
+    magnitude = np.where(in_range, k_boundary / (d_to_boundary ** 3 + eps), 0.0)
     
     F_boundary = magnitude * direction_to_center
     
